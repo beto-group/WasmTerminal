@@ -1,0 +1,15 @@
+{
+  "name": "datacore_terminal_core",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "datacore_terminal_core_bg.wasm",
+    "datacore_terminal_core.js",
+    "datacore_terminal_core.d.ts"
+  ],
+  "main": "datacore_terminal_core.js",
+  "types": "datacore_terminal_core.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
