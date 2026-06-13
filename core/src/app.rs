@@ -7,6 +7,18 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use vt100::Parser;
 
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = datacore_fs, catch)]
+    async fn list(path: &str) -> Result<JsValue, JsValue>;
+
+    #[wasm_bindgen(js_namespace = datacore_fs, catch)]
+    async fn read(path: &str) -> Result<JsValue, JsValue>;
+    
+    #[wasm_bindgen(js_namespace = datacore_fs, catch)]
+    async fn stat(path: &str) -> Result<JsValue, JsValue>;
+}
+
 pub struct TerminalApp {
     history: Rc<RefCell<Vec<String>>>,
     input: String,
@@ -182,6 +194,115 @@ impl TerminalApp {
             "help" => self.history.borrow_mut().push("VFS Mode: help, clear, pwd, ls, cd, cat".to_string()),
             "clear" => self.history.borrow_mut().clear(),
             "pwd" => self.history.borrow_mut().push(cwd.clone()),
+            "ls" => {
+                let target_dir = if _args.is_empty() { cwd.clone() } else {
+                    let p = _args[0].clone();
+                    if p.starts_with('/') { p } else if cwd == "/" { format!("/{}", p) } else { format!("{}/{}", cwd, p) }
+                };
+                let history_clone = self.history.clone();
+                let ctx_clone = _ctx.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    match list(&target_dir).await {
+                        Ok(js_val) => {
+                            if let Some(json_str) = js_val.as_string() {
+                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                                    if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
+                                        history_clone.borrow_mut().push(format!("ls: {}", err));
+                                    } else {
+                                        let mut out = String::new();
+                                        if let Some(folders) = parsed.get("folders").and_then(|v| v.as_array()) {
+                                            for f in folders {
+                                                if let Some(s) = f.as_str() {
+                                                    let name = s.split('/').last().unwrap_or(s);
+                                                    out.push_str(&format!("[DIR] {}\n", name));
+                                                }
+                                            }
+                                        }
+                                        if let Some(files) = parsed.get("files").and_then(|v| v.as_array()) {
+                                            for f in files {
+                                                if let Some(s) = f.as_str() {
+                                                    let name = s.split('/').last().unwrap_or(s);
+                                                    out.push_str(&format!("{} \n", name));
+                                                }
+                                            }
+                                        }
+                                        if out.is_empty() { out.push_str("(empty directory)\n"); }
+                                        for line in out.lines() {
+                                            history_clone.borrow_mut().push(line.to_string());
+                                        }
+                                    }
+                                } else {
+                                    history_clone.borrow_mut().push(json_str);
+                                }
+                            }
+                            ctx_clone.request_repaint();
+                        },
+                        Err(e) => {
+                            let err_str = e.dyn_into::<js_sys::Error>().map(|e| e.message().into()).unwrap_or_else(|_| "Unknown error".to_string());
+                            history_clone.borrow_mut().push(format!("ls error: {}", err_str));
+                            ctx_clone.request_repaint();
+                        }
+                    }
+                });
+            },
+            "cat" => {
+                if _args.is_empty() {
+                    self.history.borrow_mut().push("cat: missing file operand".to_string());
+                } else {
+                    let mut target_file = _args[0].clone();
+                    if !target_file.starts_with('/') {
+                        if cwd == "/" { target_file = format!("/{}", target_file); }
+                        else { target_file = format!("{}/{}", cwd, target_file); }
+                    }
+                    let history_clone = self.history.clone();
+                    let ctx_clone = _ctx.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        match read(&target_file).await {
+                            Ok(js_val) => {
+                                if let Some(json_str) = js_val.as_string() {
+                                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                                        if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
+                                            history_clone.borrow_mut().push(format!("cat: {}", err));
+                                        } else if let Some(content) = parsed.get("content").and_then(|v| v.as_str()) {
+                                            for line in content.lines() {
+                                                history_clone.borrow_mut().push(line.to_string());
+                                            }
+                                        }
+                                    } else {
+                                        history_clone.borrow_mut().push(json_str);
+                                    }
+                                }
+                                ctx_clone.request_repaint();
+                            },
+                            Err(e) => {
+                                let err_str = e.dyn_into::<js_sys::Error>().map(|e| e.message().into()).unwrap_or_else(|_| "Unknown error".to_string());
+                                history_clone.borrow_mut().push(format!("cat error: {}", err_str));
+                                ctx_clone.request_repaint();
+                            }
+                        }
+                    });
+                }
+            },
+            "cd" => {
+                if _args.is_empty() {
+                    *self.cwd.borrow_mut() = "/".to_string();
+                } else {
+                    let target_dir = _args[0].clone();
+                    let new_cwd = if target_dir == "/" {
+                        "/".to_string()
+                    } else if target_dir == ".." {
+                        let mut parts: Vec<&str> = cwd.split('/').filter(|s| !s.is_empty()).collect();
+                        if !parts.is_empty() { parts.pop(); }
+                        if parts.is_empty() { "/".to_string() } else { format!("/{}", parts.join("/")) }
+                    } else if target_dir.starts_with('/') {
+                        target_dir
+                    } else {
+                        if cwd == "/" { format!("/{}", target_dir) }
+                        else { format!("{}/{}", cwd, target_dir) }
+                    };
+                    *self.cwd.borrow_mut() = new_cwd;
+                }
+            },
             // Simplified fallback
             _ => self.history.borrow_mut().push(format!("command not found: {}", program)),
         }
