@@ -1,0 +1,8 @@
+{
+  "name": "datacore-terminal-wasm",
+  "version": "1.0.0",
+  "description": "WASM Datacore Terminal",
+  "scripts": {
+    "build": "cd core && wasm-pack build --target web --out-dir ../dist"
+  }
+}
