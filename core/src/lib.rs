@@ -1,27 +1,49 @@
-#![warn(clippy::all, rust_2018_idioms)]
+use std::io::Write;
 
-mod app;
-pub use app::TerminalApp;
+#[no_mangle]
+pub extern "C" fn init() {
+    println!("\x1b[36mWelcome to WASI Shell\x1b[0m");
+    println!("Type 'help' to see available commands.");
+    print!("> ");
+    let _ = std::io::stdout().flush();
+}
 
-use eframe::wasm_bindgen::{self, prelude::*};
+static mut CMD_BUFFER: String = String::new();
 
-#[wasm_bindgen]
-pub fn start_terminal(canvas_id: String) -> Result<(), wasm_bindgen::JsValue> {
-    // Make sure panics are logged using `console.error`.
-    console_error_panic_hook::set_once();
+#[no_mangle]
+pub extern "C" fn handle_char(c: u32) {
+    let ch = std::char::from_u32(c).unwrap_or('?');
+    unsafe {
+        if ch == '\r' || ch == '\n' {
+            println!();
+            execute_command(&CMD_BUFFER);
+            CMD_BUFFER.clear();
+            print!("> ");
+            let _ = std::io::stdout().flush();
+        } else if ch == '\x08' || ch == '\x7f' { // Backspace
+            if CMD_BUFFER.pop().is_some() {
+                print!("\x08 \x08"); // Erase char visually
+                let _ = std::io::stdout().flush();
+            }
+        } else {
+            CMD_BUFFER.push(ch);
+            print!("{}", ch);
+            let _ = std::io::stdout().flush();
+        }
+    }
+}
 
-    let web_options = eframe::WebOptions::default();
-
-    wasm_bindgen_futures::spawn_local(async move {
-        eframe::WebRunner::new()
-            .start(
-                &canvas_id,
-                web_options,
-                Box::new(|cc| Box::new(TerminalApp::new(cc))),
-            )
-            .await
-            .expect("failed to start eframe");
-    });
-
-    Ok(())
+fn execute_command(cmd: &str) {
+    let cmd = cmd.trim();
+    if cmd == "help" {
+        println!("Available commands: help, echo, clear, whoami");
+    } else if cmd.starts_with("echo ") {
+        println!("{}", &cmd[5..]);
+    } else if cmd == "clear" {
+        print!("\x1b[2J\x1b[H");
+    } else if cmd == "whoami" {
+        println!("datacore-admin");
+    } else if !cmd.is_empty() {
+        println!("Command not found: {}", cmd);
+    }
 }
