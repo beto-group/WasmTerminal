@@ -12,6 +12,7 @@ static mut CWD: String = String::new();
 
 extern "C" {
     fn dispatch_fs_op(op_type: i32, path_ptr: *const u8, path_len: usize);
+    fn dispatch_fs_op_with_data(op_type: i32, path_ptr: *const u8, path_len: usize, data_ptr: *const u8, data_len: usize);
 }
 
 #[no_mangle]
@@ -100,7 +101,7 @@ fn execute_command(cmd: &str) {
     
     match program {
         "help" => {
-            println!("Available commands: help, echo, clear, pwd, ls, cd, cat, whoami");
+            println!("Available commands: help, echo, clear, pwd, ls, cd, cat, mkdir, touch, rm, write, whoami");
             print_prompt();
         }
         "echo" => {
@@ -158,6 +159,51 @@ fn execute_command(cmd: &str) {
                 dispatch_fs_op(3, resolved.as_ptr(), resolved.len());
             }
         }
+        "mkdir" => {
+            if args.is_empty() {
+                println!("mkdir: missing directory operand");
+                print_prompt();
+            } else {
+                let resolved = resolve_path(args[0]);
+                unsafe {
+                    dispatch_fs_op(4, resolved.as_ptr(), resolved.len());
+                }
+            }
+        }
+        "touch" => {
+            if args.is_empty() {
+                println!("touch: missing file operand");
+                print_prompt();
+            } else {
+                let resolved = resolve_path(args[0]);
+                unsafe {
+                    dispatch_fs_op(5, resolved.as_ptr(), resolved.len());
+                }
+            }
+        }
+        "rm" => {
+            if args.is_empty() {
+                println!("rm: missing file operand");
+                print_prompt();
+            } else {
+                let resolved = resolve_path(args[0]);
+                unsafe {
+                    dispatch_fs_op(6, resolved.as_ptr(), resolved.len());
+                }
+            }
+        }
+        "write" => {
+            if args.len() < 2 {
+                println!("Usage: write <file> <content>");
+                print_prompt();
+            } else {
+                let resolved = resolve_path(args[0]);
+                let content = args[1..].join(" ");
+                unsafe {
+                    dispatch_fs_op_with_data(7, resolved.as_ptr(), resolved.len(), content.as_ptr(), content.len());
+                }
+            }
+        }
         _ => {
             println!("Command not found: {}", program);
             print_prompt();
@@ -198,6 +244,13 @@ pub extern "C" fn post_fs_result(op_type: i32, status_code: i32, data_ptr: *cons
                 }
             } else {
                 println!("cd: error: {}", data);
+            }
+        }
+        4 | 5 | 6 | 7 => { // mkdir, touch, rm, write
+            if status_code == 0 {
+                println!("{}", data);
+            } else {
+                println!("error: {}", data);
             }
         }
         _ => {}
